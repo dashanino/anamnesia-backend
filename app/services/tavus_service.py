@@ -1,52 +1,81 @@
 import os
+import json
 import requests
 from dotenv import load_dotenv
+from app.extensions import db
+from app.models.simulacion import Simulacion
+
+from app.services.caso_clinico_service import CasoClinicoService
 
 load_dotenv()
 
+
 class TavusService:
+
     def __init__(self):
         self.api_key = os.getenv("TAVUS_API_KEY")
-        self.replica_id = os.getenv("TAVUS_REPLICA_ID")
-        self.persona_id = os.getenv("TAVUS_PERSONA_ID")
+        self.pal_id = os.getenv("TAVUS_PAL_ID")
 
-        if not self.api_key:
-            raise ValueError("Falta TAVUS_API_KEY")
+        if not self.api_key or not self.pal_id:
+            raise ValueError("Falta TAVUS_API_KEY o TAVUS_PAL_ID")
 
         self.url = "https://tavusapi.com/v2/conversations"
+        self.caso_service = CasoClinicoService()
 
     def crear_conversacion(self):
-        caso_clinico = """
-        Eres Carlos, un paciente ficticio de 58 años.
 
-        MOTIVO DE CONSULTA:
-        Dolor opresivo en el pecho desde hace 30 minutos.
+        # 1. Generar un caso aleatorio
+        caso = self.caso_service.generar_caso()
 
-        ANTECEDENTES:
-        Hipertensión arterial y tabaquismo.
+        # 2. Preparar instrucciones para Lucy
+        instrucciones = """
+        Eres Lucy, una paciente ficticia de sexo femenino.
 
-        SÍNTOMAS:
-        - Dolor torácico de intensidad 8/10.
-        - Dolor irradiado al brazo izquierdo.
-        - Sudoración fría.
-        - Náuseas.
+        Estás participando en una simulación académica
+        de anamnesis cardiovascular.
 
-        INSTRUCCIONES:
-        - Actúa como paciente, no como médico.
-        - Responde en español.
-        - No reveles el diagnóstico.
-        - Responde únicamente según el caso clínico.
-        - Si preguntan por datos no definidos, indica
-          que no los recuerdas o no los sabes.
-        - No inventes antecedentes médicos.
-        - Guarda una evaluación del estudiante para dar una retroalimentación al final
+        REGLAS:
+        - Habla exclusivamente en español cotidiano.
+        - Actúa como paciente, nunca como médica.
+        - Usa la edad y ocupación indicadas en la ficha.
+        - No reveles el diagnóstico ni el escenario.
+        - No menciones el nombre técnico de tu enfermedad.
+        - Responde según los datos de la ficha clínica.
+        - No inventes síntomas, antecedentes o medicamentos.
+        - Si desconoces un dato, dilo naturalmente.
+        - No reveles toda la historia espontáneamente.
+        - Deja que el estudiante dirija la entrevista.
+        - Varía tu manera de saludar y expresarte.
+        - Mantén los datos consistentes durante la sesión.
+        - No evalúes ni califiques al estudiante.
+        - No ofrezcas retroalimentación académica.
+
+        Cuando el estudiante diga "hemos terminado",
+        responde: "Muchas gracias, doctor".
+        La aplicación se encargará de cerrar la sesión.
+
+        FICHA CLÍNICA CONFIDENCIAL:
         """
 
+        contexto = (
+            instrucciones
+            + "\n"
+            + json.dumps(
+                caso,
+                ensure_ascii=False,
+                indent=2
+            )
+        )
+
+        # 3. Crear conversación con Tavus
         payload = {
-            "replica_id": self.replica_id,
-            "persona_id": self.persona_id,
-            "conversation_name": "Simulación cardíaca",
-            "conversational_context": caso_clinico
+            "pal_id": self.pal_id,
+            "conversation_name": (
+                f"Anamnesis cardiovascular - {caso['caso_id']}"
+            ),
+            "conversational_context": contexto,
+            "dynamic_greeting": True,
+            "test_mode": True
         }
 
         headers = {
@@ -62,4 +91,36 @@ class TavusService:
         )
 
         response.raise_for_status()
-        return response.json()
+
+        resultado = response.json()
+        # Obtener el identificador de la conversación
+        conversation_id = resultado.get("conversation_id")
+
+        if not conversation_id:
+            raise ValueError(
+                "Tavus no devolvió un conversation_id"
+            )
+
+        # Crear el registro de la simulación
+        simulacion = Simulacion(
+            caso_id=caso["caso_id"],
+            conversation_id=conversation_id,
+            escenario=caso["escenario"],
+            caso_clinico=caso,
+            estado="creada"
+        )
+
+        # Guardar en PostgreSQL
+        try:
+            db.session.add(simulacion)
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            raise
+
+        # Devolver el resultado al controlador
+        return {
+            "tavus": resultado,
+            "caso": caso
+        }
+                
