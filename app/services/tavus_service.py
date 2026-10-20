@@ -123,4 +123,29 @@ class TavusService:
             "tavus": resultado,
             "caso": caso
         }
+
+    
+    def finalizar_conversacion(self, conversation_id):
+        if not conversation_id:
+            raise ValueError("El conversation_id es obligatorio")
+
+        url = f"https://tavusapi.com/v2/conversations/{conversation_id}"
+
+        headers = {
+            "x-api-key": self.api_key
+        }
+
+        response = requests.delete(
+            url,
+            headers=headers,
+            timeout=30
+        )
+
+        response.raise_for_status()
+
+        return {
+            "conversation_id": conversation_id,
+            "finalizada": True
+        }
+   
                 
