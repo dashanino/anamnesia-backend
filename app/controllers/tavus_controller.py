@@ -27,7 +27,10 @@ class TavusController:
                 "error": "No se pudo crear la conversación con Tavus"
             }), 502
 
-        except Exception:
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+
             return jsonify({
                 "error": "Error interno al crear la conversación"
             }), 500
