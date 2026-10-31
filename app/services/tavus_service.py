@@ -1,4 +1,5 @@
 import os
+import logging
 import json
 import requests
 from dotenv import load_dotenv
@@ -9,12 +10,21 @@ from app.services.caso_clinico_service import CasoClinicoService
 
 load_dotenv()
 
+logger = logging.getLogger(__name__)
+
 
 class TavusService:
 
     def __init__(self):
         self.api_key = os.getenv("TAVUS_API_KEY")
         self.pal_id = os.getenv("TAVUS_PAL_ID")
+        self.face_id = os.getenv("TAVUS_FACE_ID", "").strip()
+
+        # Conserva el modo de prueba hasta activarlo explícitamente en .env.
+        test_mode = os.getenv("TAVUS_TEST_MODE", "true").strip().lower()
+        if test_mode not in {"true", "false"}:
+            raise ValueError("TAVUS_TEST_MODE debe ser true o false")
+        self.test_mode = test_mode == "true"
 
         if not self.api_key or not self.pal_id:
             raise ValueError("Falta TAVUS_API_KEY o TAVUS_PAL_ID")
@@ -75,8 +85,12 @@ class TavusService:
             ),
             "conversational_context": contexto,
             "dynamic_greeting": True,
-            "test_mode": True
+            "test_mode": self.test_mode
         }
+
+        # Omite este campo si el PAL ya tiene un default_face_id válido.
+        if self.face_id:
+            payload["face_id"] = self.face_id
 
         headers = {
             "x-api-key": self.api_key,
@@ -107,7 +121,10 @@ class TavusService:
             conversation_id=conversation_id,
             escenario=caso["escenario"],
             caso_clinico=caso,
-            estado="creada"
+            estado=(
+                "finalizada" if resultado.get("status") == "ended"
+                else "creada"
+            )
         )
 
         # Guardar en PostgreSQL
@@ -116,6 +133,17 @@ class TavusService:
             db.session.commit()
         except Exception:
             db.session.rollback()
+            # Si falló PostgreSQL tras crear la sala, intenta cerrarla.
+            # El error de persistencia original sigue siendo el principal.
+            if resultado.get("status") != "ended":
+                try:
+                    self.finalizar_conversacion(conversation_id)
+                except Exception:
+                    logger.exception(
+                        "No se pudo cerrar en Tavus la conversación %s "
+                        "tras un fallo de persistencia; requiere revisión",
+                        conversation_id
+                    )
             raise
 
         # Devolver el resultado al controlador
@@ -129,13 +157,13 @@ class TavusService:
         if not conversation_id:
             raise ValueError("El conversation_id es obligatorio")
 
-        url = f"https://tavusapi.com/v2/conversations/{conversation_id}"
+        url = f"{self.url}/{conversation_id}/end"
 
         headers = {
             "x-api-key": self.api_key
         }
 
-        response = requests.delete(
+        response = requests.post(
             url,
             headers=headers,
             timeout=30
@@ -147,5 +175,54 @@ class TavusService:
             "conversation_id": conversation_id,
             "finalizada": True
         }
-   
-                
+
+    def diagnosticar_conversacion(self, conversation_id):
+        """Consulta Tavus sin crear ni finalizar conversaciones."""
+        response = requests.get(
+            f"{self.url}/{conversation_id}",
+            params={"verbose": "true"},
+            headers={"x-api-key": self.api_key},
+            timeout=30
+        )
+        response.raise_for_status()
+        data = response.json()
+        if not isinstance(data, dict):
+            raise ValueError("Respuesta de diagnóstico Tavus no válida")
+
+        # Lista permitida: no expone transcripciones, percepción ni tokens.
+        campos = (
+            "conversation_id", "status", "pal_id", "face_id",
+            "created_at", "updated_at", "shutdown_reason"
+        )
+        diagnostico = {
+            campo: data.get(campo)
+            if isinstance(data.get(campo), str) else None
+            for campo in campos
+        }
+        eventos = data.get("events") or []
+        if not isinstance(eventos, list):
+            eventos = []
+        diagnostico["eventos_sistema"] = []
+        for evento in eventos:
+            if not isinstance(evento, dict):
+                continue
+            tipo = evento.get("event_type")
+            if tipo not in {
+                "system.pal_joined", "system.replica_joined", "system.shutdown"
+            }:
+                continue
+            properties = evento.get("properties")
+            if not isinstance(properties, dict):
+                properties = {}
+            motivo = properties.get("shutdown_reason")
+            motivo = motivo if isinstance(motivo, str) else None
+            timestamp = evento.get("timestamp")
+            diagnostico["eventos_sistema"].append({
+                "event_type": tipo,
+                "timestamp": timestamp
+                if isinstance(timestamp, (str, int, float)) else None,
+                "shutdown_reason": motivo
+            })
+            if tipo == "system.shutdown" and motivo:
+                diagnostico["shutdown_reason"] = motivo
+        return diagnostico

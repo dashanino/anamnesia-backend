@@ -16,3 +16,11 @@ def crear_conversacion():
 )
 def finalizar_conversacion(conversation_id):
     return controller.finalizar_conversacion(conversation_id)
+
+
+@tavus_bp.route(
+    "/tavus/conversation/<string:conversation_id>/diagnostico",
+    methods=["GET"]
+)
+def diagnosticar_conversacion(conversation_id):
+    return controller.diagnosticar_conversacion(conversation_id)
