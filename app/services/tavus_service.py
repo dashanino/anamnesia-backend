@@ -85,7 +85,10 @@ class TavusService:
             ),
             "conversational_context": contexto,
             "dynamic_greeting": True,
-            "test_mode": self.test_mode
+            "test_mode": self.test_mode,
+            "properties": {
+                "enable_closed_captions": True
+            }
         }
 
         # Omite este campo si el PAL ya tiene un default_face_id válido.
