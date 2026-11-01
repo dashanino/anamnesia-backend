@@ -1,3 +1,4 @@
+import logging
 from flask import jsonify
 from app.services.caso_clinico_service import CasoClinicoService
 
@@ -17,6 +18,8 @@ class CasoClinicoController:
             }), 201
 
         except Exception:
+            logging.exception("Error al generar el caso clínico")
+
             return jsonify({
                 "error": "No se pudo generar el caso clínico"
             }), 500

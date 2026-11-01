@@ -32,6 +32,11 @@ class Simulacion(db.Model):
         nullable=False
     )
 
+    evaluacion = db.Column(
+        db.JSON,
+        nullable=True
+    )
+
     estado = db.Column(
         db.String(30),
         nullable=False,

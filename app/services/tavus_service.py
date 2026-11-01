@@ -229,3 +229,92 @@ class TavusService:
             if tipo == "system.shutdown" and motivo:
                 diagnostico["shutdown_reason"] = motivo
         return diagnostico
+
+    
+    def obtener_transcripcion(self, conversation_id):
+        """Obtiene la transcripción completa de una conversación finalizada."""
+
+        if not conversation_id:
+            raise ValueError("El conversation_id es obligatorio")
+
+        response = requests.get(
+            f"{self.url}/{conversation_id}",
+            params={"verbose": "true"},
+            headers={"x-api-key": self.api_key},
+            timeout=30
+        )
+
+        response.raise_for_status()
+
+        data = response.json()
+
+        if not isinstance(data, dict):
+            raise ValueError("Respuesta de Tavus no válida")
+
+        # Tavus devuelve los eventos cuando verbose=true.
+        eventos = data.get("events") or []
+
+        if not isinstance(eventos, list):
+            raise ValueError("Los eventos de Tavus no tienen un formato válido")
+
+        # Buscar el evento que contiene la transcripción final.
+        evento_transcripcion = next(
+            (
+                evento for evento in eventos
+                if isinstance(evento, dict)
+                and evento.get("event_type") == "application.transcription_ready"
+            ),
+            None
+        )
+
+        # La transcripción todavía puede no estar disponible.
+        if evento_transcripcion is None:
+            return {
+                "disponible": False,
+                "conversation_id": conversation_id,
+                "transcript": []
+            }
+
+        properties = evento_transcripcion.get("properties") or {}
+
+        if not isinstance(properties, dict):
+            raise ValueError("Las propiedades de la transcripción no son válidas")
+
+        transcript = properties.get("transcript")
+
+        if not isinstance(transcript, list):
+            raise ValueError("Tavus no devolvió una lista de intervenciones")
+
+        return {
+            "disponible": True,
+            "conversation_id": conversation_id,
+            "transcript": transcript,
+            "total_intervenciones": len(transcript)
+        }
+    @staticmethod
+    def limpiar_transcripcion(transcript):
+        dialogo = []
+
+        for intervencion in transcript:
+            if not isinstance(intervencion, dict):
+                continue
+
+            role = intervencion.get("role")
+
+            if role not in ["assistant", "user"]:
+                continue
+
+            contenido = intervencion.get("content")
+
+            if not isinstance(contenido, str) or not contenido.strip():
+                continue
+
+            dialogo.append({
+                "role": role,
+                "content": contenido.strip(),
+                "seconds_from_start": intervencion.get(
+                    "seconds_from_start"
+                )
+            })
+
+        return dialogo

@@ -1,11 +1,8 @@
 import os
 from dotenv import load_dotenv
+from datetime import timedelta
 
 load_dotenv()
-
-class Config:
-    import os
-from datetime import timedelta
 
 
 class Config:
@@ -18,4 +15,3 @@ class Config:
         "CORS_ORIGINS",
         "http://localhost:4200"
     ).split(",")
-
