@@ -47,3 +47,9 @@ def evaluar_conversacion(conversation_id):
 def obtener_evaluacion(conversation_id):
     return controller.obtener_evaluacion(conversation_id)
 
+@tavus_bp.route(
+    "/tavus/conversation/<string:conversation_id>/feedback-audio",
+    methods=["GET"]
+)
+def generar_feedback_tts(conversation_id):
+    return controller.generar_feedback_tts(conversation_id)
